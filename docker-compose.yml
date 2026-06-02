@@ -1,0 +1,123 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=ottdb
+      - POSTGRES_USER=ottuser
+      - POSTGRES_PASSWORD=ottpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ottuser -d ottdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth:
+    build: ./auth_service
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://ottuser:ottpass@db/ottdb
+      - JWT_SECRET_KEY=mysecretkey
+      - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  content:
+    build: ./content_service
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://ottuser:ottpass@db/ottdb
+      - TMDB_API_KEY=03722d3a197a1488464e0e532a377427
+      - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  streaming:
+    build: ./streaming_service
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_URL=postgresql://ottuser:ottpass@db/ottdb
+      - JWT_SECRET_KEY=mysecretkey
+      - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8003/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  simulator:
+    build: ./simulator
+    environment:
+      - AUTH_URL=http://auth:8001
+      - CONTENT_URL=http://content:8002
+      - STREAM_URL=http://streaming:8003
+    depends_on:
+      auth:
+        condition: service_healthy
+      content:
+        condition: service_healthy
+      streaming:
+        condition: service_healthy
+
+  elasticsearch:
+    image: elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kibana:
+    image: kibana:8.13.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  spark:
+    build: ./spark
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+      - ES_HOST=http://elasticsearch:9200
+      - DOS_THRESHOLD=100
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  es_data:
