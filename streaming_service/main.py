@@ -18,7 +18,7 @@ ALGORITHM = "HS256"
 
 try:
     producer = KafkaProducer(
-        bootstrap_servers="msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092",
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"),
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         retries=5,
         acks="all"

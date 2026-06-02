@@ -12,7 +12,7 @@ import time
 import os
 
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "03722d3a197a1488464e0e532a377427")
-TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_BASE_URL = os.getenv("TMDB_BASE_URL", "https://api.themoviedb.org/3")
 
 GENRE_MAP = {
     "액션": 28,
@@ -23,7 +23,7 @@ GENRE_MAP = {
 
 try:
     producer = KafkaProducer(
-        bootstrap_servers="msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092",
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"),
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         retries=5,
         acks="all"

@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -15,7 +17,7 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-SECRET_KEY = "mysecretkey"  # 나중에 환경변수로
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
@@ -24,7 +26,7 @@ security = HTTPBearer()
 
 try:
     producer = KafkaProducer(
-        bootstrap_servers="msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092",
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"),
         value_serializer=lambda v: json.dumps(v).encode("utf-8")
     )
 except Exception as e:

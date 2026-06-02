@@ -1,12 +1,13 @@
+import os
 import requests
 import threading
 import time
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-AUTH_URL = "http://localhost:8001"
-CONTENT_URL = "http://localhost:8002"
-STREAM_URL = "http://localhost:8003"
+AUTH_URL = os.getenv("AUTH_URL", "http://localhost:8001")
+CONTENT_URL = os.getenv("CONTENT_URL", "http://localhost:8002")
+STREAM_URL = os.getenv("STREAM_URL", "http://localhost:8003")
 
 AGE_GROUPS = ["10대", "20-30대", "40대이상"]
 GENRES = ["액션", "드라마", "애니", "코미디"]
