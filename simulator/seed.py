@@ -1,22 +1,36 @@
-import sys
 import os
 import random
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
 from passlib.context import CryptContext
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../auth_service"))
-from models import Base, User
-
-DATABASE_URL = "postgresql://ottuser:ottpass@localhost/ottdb"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://ottuser:ottpass@localhost/ottdb")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 AGE_GROUPS = ["10대", "20-30대", "40대이상"]
 GENRES = ["액션", "드라마", "애니", "코미디"]
 TIME_SLOTS = ["오전", "오후", "저녁"]
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)
+    password = Column(String)
+    age_group = Column(String)
+    preferred_genre = Column(String)
+    watch_time_slot = Column(String)
+
+class WatchProgress(Base):
+    __tablename__ = "watch_progress"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.user_id"))
+    content_id = Column(Integer)
+    progress = Column(Float, default=0.0)
 
 def create_users():
     users = []

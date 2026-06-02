@@ -74,7 +74,10 @@ services:
       - AUTH_URL=http://auth:8001
       - CONTENT_URL=http://content:8002
       - STREAM_URL=http://streaming:8003
+      - DATABASE_URL=postgresql://ottuser:ottpass@db/ottdb
     depends_on:
+      db:
+        condition: service_healthy
       auth:
         condition: service_healthy
       content:
