@@ -22,8 +22,8 @@ spec:
               value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
             - name: ES_HOST
               value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
-            - name: DOS_THRESHOLD
-              value: "100"
+            - name: DOS_MULTIPLIER
+              value: "5.0"
           resources:
             requests:
               memory: "512Mi"

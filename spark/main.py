@@ -14,10 +14,17 @@ from datetime import datetime
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
 KAFKA_TOPIC = "msa-logs"
 ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
-DOS_THRESHOLD = int(os.getenv("DOS_THRESHOLD", "100"))  # 1분 윈도우 임계값
-SALT_BUCKETS = 10  # 분산 버킷 수
+DOS_MULTIPLIER = float(os.getenv("DOS_MULTIPLIER", "5.0"))  # 정상 평균의 N배(n=5)
+BASELINE_BATCHES = 2                                          # 기준값 수집 배치 수
+SALT_BUCKETS = 10                                             # 분산 버킷 수
 
 es = Elasticsearch(ES_HOST)
+
+# 정상 트래픽 기준값
+baseline_state = {
+    "avg": None,
+    "batch_count": 0
+}
 
 spark = SparkSession.builder \
     .appName("MSA-AnomalyDetection") \
@@ -84,7 +91,7 @@ auth_bypass.writeStream \
     .outputMode("append") \
     .start()
 
-# DoS 탐지
+# DoS 탐지: Two-Stage Aggregation with Salting
 # Stage 1: Salt 붙여서 Hot Key 분산
 dos_stage1 = logs \
     .withColumn("salt", (rand() * SALT_BUCKETS).cast("int").cast("string")) \
@@ -98,25 +105,47 @@ dos_stage1 = logs \
 def process_dos(batch_df, batch_id):
     if batch_df.count() == 0:
         return
+
     # Stage 2: Salt 제거 후 재집계
     stage2 = batch_df \
         .withColumn("ip", split(col("ip_salt"), "_")[0]) \
         .groupBy("window", "ip") \
         .agg(spark_sum("partial_count").alias("req_count"))
 
-    attackers = stage2.filter(col("req_count") > DOS_THRESHOLD)
+    current_avg_row = stage2.agg({"req_count": "avg"}).collect()[0][0]
+    if current_avg_row is None:
+        return
+    current_avg = float(current_avg_row)
+
+    # 초반동안 정상 기준값 수집
+    if baseline_state["batch_count"] < BASELINE_BATCHES:
+        if baseline_state["avg"] is None:
+            baseline_state["avg"] = current_avg
+        else:
+            n = baseline_state["batch_count"]
+            baseline_state["avg"] = (baseline_state["avg"] * n + current_avg) / (n + 1)
+        baseline_state["batch_count"] += 1
+        print(f"[기준값 수집 중] 배치 {baseline_state['batch_count']}/{BASELINE_BATCHES} 평균: {baseline_state['avg']:.1f}")
+        return
+
+    # 기준값의 N배 초과 시 DoS 탐지
+    threshold = baseline_state["avg"] * DOS_MULTIPLIER
+    attackers = stage2.filter(col("req_count") > threshold)
+
     for row in attackers.collect():
         doc = {
             "timestamp": datetime.utcnow().isoformat(),
             "ip": row["ip"],
             "req_count": row["req_count"],
-            "threshold": DOS_THRESHOLD,
+            "baseline_avg": baseline_state["avg"],
+            "threshold": threshold,
+            "multiplier": DOS_MULTIPLIER,
             "attack_type": "dos",
             "detected_at": datetime.utcnow().isoformat()
         }
         try:
             es.index(index="msa-detections", body=doc)
-            print(f"[DoS 탐지] IP: {row['ip']} 요청수: {row['req_count']} 임계값: {DOS_THRESHOLD}")
+            print(f"[DoS 탐지] IP: {row['ip']} 요청수: {row['req_count']} 임계값: {threshold:.1f} (평균 {baseline_state['avg']:.1f}의 {DOS_MULTIPLIER}배)")
         except Exception as e:
             print(f"ES 저장 실패: {e}")
 
