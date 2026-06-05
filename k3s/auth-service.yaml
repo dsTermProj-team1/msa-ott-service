@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: auth-service:latest
+          imagePullPolicy: Never
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://ottuser:ottpass@postgresql/ottdb"
+            - name: JWT_SECRET_KEY
+              value: "mysecretkey"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+          ports:
+            - containerPort: 8001
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: default
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8001
+      targetPort: 8001
+  type: ClusterIP

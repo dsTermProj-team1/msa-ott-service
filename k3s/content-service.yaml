@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: content-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: content-service
+  template:
+    metadata:
+      labels:
+        app: content-service
+    spec:
+      containers:
+        - name: content-service
+          image: content-service:latest
+          imagePullPolicy: Never
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://ottuser:ottpass@postgresql/ottdb"
+            - name: TMDB_API_KEY
+              value: "03722d3a197a1488464e0e532a377427"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+          ports:
+            - containerPort: 8002
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: content-service
+  namespace: default
+spec:
+  selector:
+    app: content-service
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP
