@@ -93,7 +93,7 @@ def watch_content(content_id, headers, behavior, watched_ids):
     requests.get(f"{CONTENT_URL}/content/detail/{content_id}",
                  headers=headers, timeout=5)
     res = requests.post(f"{STREAM_URL}/stream/start/{content_id}",
-                        headers=headers, timeout=5)
+                        headers=headers, timeout=10)
     if res.status_code != 200:
         return
     prev_ratio = res.json().get("watch_ratio", 0.0)
@@ -116,7 +116,7 @@ def simulate_user(user):
         res = requests.post(f"{AUTH_URL}/auth/login", json={
             "user_id": user["user_id"],
             "password": user["password"]
-        }, timeout=5)
+        }, timeout=10)
         if res.status_code != 200:
             return
         token = res.json().get("access_token")
@@ -125,7 +125,7 @@ def simulate_user(user):
             "X-User-Id": user["user_id"]
         }
         res = requests.get(f"{CONTENT_URL}/content/list",
-                           headers=headers, timeout=5)
+                           headers=headers, timeout=10)
         if res.status_code != 200:
             return
         contents = res.json().get("contents", [])
@@ -152,7 +152,7 @@ def dos_attack():
         res = requests.post(f"{AUTH_URL}/auth/login", json={
             "user_id": "user_0000",
             "password": "password123"
-        }, timeout=5)
+        }, timeout=10)
         if res.status_code != 200:
             print("DoS 공격자 로그인 실패")
             return
@@ -167,7 +167,7 @@ def dos_attack():
     def attack():
         while not stop_event.is_set():
             try:
-                requests.post(f"{STREAM_URL}/stream/start/1",
+                requests.post(f"{STREAM_URL}/stream/start/1057265",
                               headers=headers, timeout=2)
             except:
                 pass
@@ -196,7 +196,7 @@ def auth_bypass():
 def run():
     users = create_user_patterns()
     print(f"정상 유저 {len(users)}명 시뮬레이션 시작")
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(simulate_user, users)
     print("정상 유저 완료. 60초 후 공격자 실행")
     time.sleep(60)
