@@ -126,7 +126,17 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)):
     contents = db.query(models.Content).all()
-    return templates.TemplateResponse("index.html", {"request": request, "contents": contents})
+    contents_list = [
+        {
+            "content_id": c.content_id,
+            "title": c.title,
+            "genre": c.genre,
+            "poster_path": c.poster_path,
+            "popularity": c.popularity
+        }
+        for c in contents
+    ]
+    return templates.TemplateResponse("index.html", {"request": request, "contents": contents_list})
 
 
 @app.get("/content/list")

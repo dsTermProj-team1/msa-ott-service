@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamIQ</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #141414; color: #fff; font-family: 'Arial', sans-serif; }
+
+        header {
+            background: linear-gradient(180deg, #000 0%, transparent 100%);
+            padding: 20px 40px;
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 40px;
+        }
+
+        .logo { color: #e50914; font-size: 28px; font-weight: bold; letter-spacing: 2px; }
+
+        nav a {
+            color: #e5e5e5;
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+        nav a:hover { color: #fff; }
+
+        .genre-tabs {
+            padding: 100px 40px 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .genre-tab {
+            padding: 8px 20px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: transparent;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .genre-tab:hover, .genre-tab.active { background: #e50914; border-color: #e50914; }
+
+        .section { padding: 20px 40px; }
+        .section h2 { font-size: 20px; margin-bottom: 15px; color: #e5e5e5; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 10px;
+        }
+
+        .card {
+            position: relative;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+            aspect-ratio: 2/3;
+        }
+        .card:hover { transform: scale(1.05); z-index: 10; }
+
+        .card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .card-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%);
+            padding: 20px 10px 10px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .card:hover .card-overlay { opacity: 1; }
+
+        .card-title { font-size: 12px; font-weight: bold; }
+        .card-genre { font-size: 11px; color: #aaa; margin-top: 4px; }
+
+        .genre-badge {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: #e50914;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">STREAMIQ</div>
+        <nav style="display:flex; gap:20px;">
+            <a href="#">홈</a>
+            <a href="#">시리즈</a>
+            <a href="#">영화</a>
+            <a href="#">NEW</a>
+        </nav>
+    </header>
+
+    <div class="genre-tabs">
+        <button class="genre-tab active" onclick="filterGenre(this, '전체')">전체</button>
+        <button class="genre-tab" onclick="filterGenre(this, '액션')">액션</button>
+        <button class="genre-tab" onclick="filterGenre(this, '드라마')">드라마</button>
+        <button class="genre-tab" onclick="filterGenre(this, '애니')">애니</button>
+        <button class="genre-tab" onclick="filterGenre(this, '코미디')">코미디</button>
+    </div>
+
+    <div class="section">
+        <h2 id="section-title">전체 콘텐츠</h2>
+        <div class="grid" id="content-grid">
+            {% for content in contents %}
+            <div class="card" data-genre="{{ content.genre }}">
+                <div class="genre-badge">{{ content.genre }}</div>
+                {% if content.poster_path %}
+                <img src="https://image.tmdb.org/t/p/w300{{ content.poster_path }}"
+                     alt="{{ content.title }}"
+                     onerror="this.src='https://via.placeholder.com/300x450/1a1a1a/666?text=No+Image'">
+                {% else %}
+                <img src="https://via.placeholder.com/300x450/1a1a1a/666?text=No+Image" alt="{{ content.title }}">
+                {% endif %}
+                <div class="card-overlay">
+                    <div class="card-title">{{ content.title }}</div>
+                    <div class="card-genre">{{ content.genre }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        function filterGenre(el, genre) {
+            document.querySelectorAll('.genre-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+
+            document.querySelectorAll('.card').forEach(card => {
+                if (genre === '전체' || card.dataset.genre === genre) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+
+            document.getElementById('section-title').textContent =
+                genre === '전체' ? '전체 콘텐츠' : genre + ' 콘텐츠';
+        }
+    </script>
+</body>
+</html>
