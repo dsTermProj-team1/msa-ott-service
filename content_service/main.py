@@ -136,7 +136,7 @@ def index(request: Request, db: Session = Depends(get_db)):
         }
         for c in contents
     ]
-    return templates.TemplateResponse("index.html", {"request": request, "contents": contents_list})
+    return templates.TemplateResponse(request, "index.html", {"contents": contents_list})
 
 
 @app.get("/content/list")

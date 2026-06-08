@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "python seed.py && python main.py"]
+CMD ["sh", "-c", "python -u seed.py && python -u main.py"]

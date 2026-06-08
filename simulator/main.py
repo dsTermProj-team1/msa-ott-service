@@ -197,9 +197,9 @@ def run():
     users = create_user_patterns()
     print(f"정상 유저 {len(users)}명 시뮬레이션 시작")
 
-    # 60초 후 공격자 시작 (정상 유저와 동시에)
+    # 30초 후 공격자 시작 (정상 유저와 동시에)
     def delayed_attack():
-        time.sleep(60)
+        time.sleep(30)
         print("공격자 실행 시작 (정상 유저 실행 중)")
         t1 = threading.Thread(target=dos_attack)
         t2 = threading.Thread(target=auth_bypass)
@@ -213,6 +213,10 @@ def run():
 
     with ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(simulate_user, users)
+    print("정상 유저 시뮬레이션 완료")
 
     attack_thread.join()
     print("시뮬레이션 완료")
+
+if __name__ == "__main__":
+    run()
