@@ -194,13 +194,20 @@ def auth_bypass():
     print("인증 우회 공격 종료")
 
 def run():
+    # 1단계: 정상 유저 1000명 → Spark 기준값 수립용
     users = create_user_patterns()
-    print(f"정상 유저 {len(users)}명 시뮬레이션 시작")
+    print(f"1단계: 정상 유저 {len(users)}명 시뮬레이션 시작 (기준값 수립)")
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        executor.map(simulate_user, users)
+    print("1단계 완료. Spark 기준값 수립 대기 중 (90초)")
+    time.sleep(90)
 
-    # 30초 후 공격자 시작 (정상 유저와 동시에)
-    def delayed_attack():
-        time.sleep(30)
-        print("공격자 실행 시작 (정상 유저 실행 중)")
+    # 2단계: 정상 유저 200명 + 공격자 동시
+    users2 = create_user_patterns()
+    print(f"2단계: 정상 유저 {len(users2)}명 + 공격자 동시 시작")
+
+    def run_attack():
+        time.sleep(30)  # 정상 유저 먼저 30초
         t1 = threading.Thread(target=dos_attack)
         t2 = threading.Thread(target=auth_bypass)
         t1.start()
@@ -208,12 +215,11 @@ def run():
         t1.join()
         t2.join()
 
-    attack_thread = threading.Thread(target=delayed_attack)
+    attack_thread = threading.Thread(target=run_attack)
     attack_thread.start()
 
     with ThreadPoolExecutor(max_workers=20) as executor:
-        executor.map(simulate_user, users)
-    print("정상 유저 시뮬레이션 완료")
+        executor.map(simulate_user, users2)
 
     attack_thread.join()
     print("시뮬레이션 완료")
