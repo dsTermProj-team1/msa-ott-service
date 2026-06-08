@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from database import get_db, engine, SessionLocal
 from kafka import KafkaProducer
@@ -32,6 +34,7 @@ except Exception as e:
     print(f"Kafka 연결 실패: {e}")
     producer = None
 
+templates = Jinja2Templates(directory="templates")
 
 def send_log(
     request: Request,
@@ -118,6 +121,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request, db: Session = Depends(get_db)):
+    contents = db.query(models.Content).all()
+    return templates.TemplateResponse("index.html", {"request": request, "contents": contents})
 
 
 @app.get("/content/list")
