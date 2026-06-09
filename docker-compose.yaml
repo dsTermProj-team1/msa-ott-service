@@ -111,15 +111,45 @@ services:
       elasticsearch:
         condition: service_healthy
 
-  spark:
-    build: ./spark
+ # ── speed layer (Spark 대체) ──
+  # 1단계: msa-logs 소비, 인증우회 단건 탐지(ES) + (ip,window) 부분합을 msa-ip-counts 로 flush
+  speed-consumer:
+    build: ./speed-consumer
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+      - KAFKA_GROUP_ID=speed-layer-group
+      - PARTIAL_TOPIC=msa-ip-counts
       - ES_HOST=http://elasticsearch:9200
       - DOS_MULTIPLIER=5.0
+      - WINDOW_SIZE_SEC=60
+      - FLUSH_SEC=5
+      - WATERMARK_SEC=30
     depends_on:
       elasticsearch:
         condition: service_healthy
+ 
+  # 2단계: msa-ip-counts(부분합)만 소비 → pod별 upsert 전역 합산 → DoS 판정(ES)
+  dos-aggregator:
+    build: ./dos-aggregator
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+      - PARTIAL_TOPIC=msa-ip-counts
+      - ES_HOST=http://elasticsearch:9200
+      - DOS_MULTIPLIER=5.0
+      - WINDOW_SIZE_SEC=60
+      - WATERMARK_SEC=30
+      - GC_TIMEOUT_SEC=120
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+
+
+
+
+
+
+
 
 volumes:
   postgres_data:
