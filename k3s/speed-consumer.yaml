@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: speed-consumer
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: speed-consumer
+  template:
+    metadata:
+      labels:
+        app: speed-consumer
+    spec:
+      containers:
+        - name: speed-consumer
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: KAFKA_GROUP_ID
+              value: "speed-layer-group"
+            - name: PARTIAL_TOPIC
+              value: "msa-ip-counts"
+            - name: ES_HOST
+              value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+            - name: DOS_MULTIPLIER
+              value: "5.0"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

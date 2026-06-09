@@ -1,0 +1,40 @@
+# 2단계 전역 집계기. 부분합만 읽으므로 가벼움 -> 단일 pod로 충분(스케일 안 함)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dos-aggregator
+  namespace: kafka
+spec:
+  replicas: 1                          # 고정 1. 부분합이라 트래픽이 원본의 수천분의 1
+  selector:
+    matchLabels:
+      app: dos-aggregator
+  template:
+    metadata:
+      labels:
+        app: dos-aggregator
+    spec:
+      containers:
+        - name: dos-aggregator
+          image: dos-aggregator:latest
+          imagePullPolicy: Never        # 로컬 빌드 후 k3s containerd import
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: PARTIAL_TOPIC
+              value: "msa-ip-counts"
+            - name: ES_HOST
+              value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+            - name: DOS_MULTIPLIER
+              value: "5.0"
+            - name: WATERMARK_SEC
+              value: "30"
+            - name: GC_TIMEOUT_SEC
+              value: "120"               # 2분
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
