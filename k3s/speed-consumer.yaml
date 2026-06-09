@@ -1,10 +1,12 @@
+# speed layer 컨슈머. KEDA ScaledObject(speed-consumer-scaler)가 replica를 관리한다.
+# Spark deployment(spark-detection)는 더 이상 쓰지 않으므로 삭제할 것.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: speed-consumer
   namespace: kafka
 spec:
-  replicas: 1
+  replicas: 1                          # KEDA가 lag/cron으로 1~6 사이 조정
   selector:
     matchLabels:
       app: speed-consumer
@@ -16,14 +18,12 @@ spec:
       containers:
         - name: speed-consumer
           image: speed-consumer:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Never        # 로컬 빌드 후 k3s containerd 로 import
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
             - name: KAFKA_GROUP_ID
-              value: "speed-layer-group"
-            - name: PARTIAL_TOPIC
-              value: "msa-ip-counts"
+              value: "speed-layer-group"     # KEDA ScaledObject 의 consumerGroup 과 동일해야 함
             - name: ES_HOST
               value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
             - name: DOS_MULTIPLIER

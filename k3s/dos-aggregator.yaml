@@ -1,4 +1,4 @@
-# 2단계 전역 집계기. 부분합만 읽으므로 가벼움 -> 단일 pod로 충분(스케일 안 함)
+# 2단계 전역 집계기. 부분합만 읽으므로 가볍다 → 단일 pod로 충분(스케일 안 함).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

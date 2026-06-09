@@ -111,7 +111,7 @@ services:
       elasticsearch:
         condition: service_healthy
 
- # ── speed layer (Spark 대체) ──
+  # ── speed layer (Spark 대체) ──
   # 1단계: msa-logs 소비, 인증우회 단건 탐지(ES) + (ip,window) 부분합을 msa-ip-counts 로 flush
   speed-consumer:
     build: ./speed-consumer
@@ -127,7 +127,7 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
- 
+
   # 2단계: msa-ip-counts(부분합)만 소비 → pod별 upsert 전역 합산 → DoS 판정(ES)
   dos-aggregator:
     build: ./dos-aggregator
@@ -142,14 +142,6 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
-
-
-
-
-
-
-
-
 
 volumes:
   postgres_data:
