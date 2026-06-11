@@ -3,6 +3,20 @@ kind: Namespace
 metadata:
   name: monitoring
 ---
+# ES 데이터 영구화 — 파드 재시작/노드 리부트에도 인덱스(.kibana 대시보드 포함)·
+# msa-batch·msa-baseline 보존. local-path(기본 SC) 사용, 단일 노드라 RWO.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,6 +24,9 @@ metadata:
   namespace: monitoring
 spec:
   replicas: 1
+  # RWO PVC라 새 파드가 옛 파드와 동시에 못 붙음 → 롤링 대신 Recreate(옛 파드 먼저 종료)
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: elasticsearch
@@ -18,6 +35,9 @@ spec:
       labels:
         app: elasticsearch
     spec:
+      # 빈 PVC는 root 소유 → ES(uid/gid 1000)가 못 씀. fsGroup으로 볼륨을 gid 1000에 귀속
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: elasticsearch
           image: elasticsearch:8.13.0
@@ -37,6 +57,13 @@ spec:
             limits:
               memory: "2Gi"
               cpu: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: elasticsearch-data
 ---
 apiVersion: v1
 kind: Service
