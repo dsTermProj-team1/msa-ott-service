@@ -1,0 +1,96 @@
+# msa-logs 처리량(실시간 흐름)을 ES(msa-throughput)로 보고하는 컨슈머.
+#  - 독립 consumer group(throughput-reporter)으로 msa-logs를 읽어 speed-consumer와 격리
+#  - FLUSH_SEC 마다 서비스별 처리 건수 + 총량/초당 처리율을 ES에 적재
+#  - 새 이미지 빌드 없이 speed-consumer 이미지(kafka-python + elasticsearch 포함) 재사용
+#  Kibana 실시간 대시보드의 "실시간 로그 처리량" 패널 데이터 소스(msa-throughput).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-throughput-reporter-script
+  namespace: kafka
+data:
+  reporter.py: |
+    import json, os, time
+    from collections import defaultdict
+    from datetime import datetime, timezone
+    from kafka import KafkaConsumer
+    from elasticsearch import Elasticsearch
+
+    BOOT = os.getenv("KAFKA_BOOTSTRAP_SERVERS",
+                     "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
+    ES_HOST = os.getenv("ES_HOST",
+                        "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    FLUSH = int(os.getenv("FLUSH_SEC", "5"))
+
+    es = Elasticsearch(ES_HOST)
+    c = KafkaConsumer("msa-logs", bootstrap_servers=BOOT.split(","),
+                      group_id="throughput-reporter", auto_offset_reset="latest",
+                      enable_auto_commit=True,
+                      value_deserializer=lambda m: m.decode("utf-8"))
+    print("[throughput-reporter] msa-logs -> ES msa-throughput 시작")
+    acc = defaultdict(int)
+    last = time.time()
+    while True:
+        batch = c.poll(timeout_ms=1000)
+        for _tp, msgs in batch.items():
+            for m in msgs:
+                try:
+                    r = json.loads(m.value)
+                    acc[r.get("service") or "unknown"] += 1
+                except Exception:
+                    pass
+        if time.time() - last >= FLUSH:
+            ts = datetime.now(timezone.utc).isoformat()
+            total = sum(acc.values())
+            rate = round(total / FLUSH, 2)
+            for svc, cnt in acc.items():
+                es.index(index="msa-throughput", body={
+                    "timestamp": ts, "service": svc, "count": cnt,
+                    "total": total, "rate_per_sec": rate,
+                })
+            if total:
+                print(f"[throughput] {ts} total={total} rate={rate}/s {dict(acc)}")
+            acc.clear()
+            last = time.time()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-throughput-reporter
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-throughput-reporter
+  template:
+    metadata:
+      labels:
+        app: log-throughput-reporter
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      containers:
+        - name: reporter
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "/script/reporter.py"]
+          env:
+            - name: ES_HOST
+              value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+            - name: FLUSH_SEC
+              value: "5"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: script
+          configMap:
+            name: log-throughput-reporter-script

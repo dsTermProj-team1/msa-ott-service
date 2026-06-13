@@ -16,6 +16,7 @@ import json
 CORE = "8.13.0"
 DV_ID = "dv-msa-detections"
 DV_POD_ID = "dv-msa-pod-status"
+DV_TP_ID = "dv-msa-throughput"
 INDEX_REF = "kibanaSavedObjectMeta.searchSourceJSON.index"
 
 objs = []
@@ -63,6 +64,16 @@ objs.append({
     "attributes": {"timeFieldName": "timestamp", "title": "msa-pod-status"},
     "coreMigrationVersion": CORE,
     "id": DV_POD_ID,
+    "managed": False,
+    "references": [],
+    "type": "index-pattern",
+    "typeMigrationVersion": "8.0.0",
+})
+
+objs.append({
+    "attributes": {"timeFieldName": "timestamp", "title": "msa-throughput"},
+    "coreMigrationVersion": CORE,
+    "id": DV_TP_ID,
     "managed": False,
     "references": [],
     "type": "index-pattern",
@@ -209,6 +220,49 @@ viz("viz-pod-trend", "Pod 수 vs cron 최솟값", {
 }, dv=DV_POD_ID)
 
 
+# ── 실시간 로그 처리량 (흐름, msa-throughput) ────────────────
+viz("viz-tp-rate", "현재 처리율 (/s)",
+    metric_state("처리율(/s)", latest_metric("rate_per_sec", "처리율 (/s)")),
+    dv=DV_TP_ID)
+
+viz("viz-tp-flow", "실시간 로그 처리량 (서비스별)", {
+    "title": "실시간 로그 처리량 (서비스별)",
+    "type": "area",
+    "params": {
+        "type": "area",
+        "grid": {"categoryLines": False},
+        "categoryAxes": [{"id": "CategoryAxis-1", "type": "category", "position": "bottom",
+                          "show": True, "scale": {"type": "linear"},
+                          "labels": {"show": True, "filter": True, "truncate": 100},
+                          "title": {"text": "시각"}}],
+        "valueAxes": [{"id": "ValueAxis-1", "name": "LeftAxis-1", "type": "value",
+                       "position": "left", "show": True,
+                       "scale": {"type": "linear", "mode": "normal"},
+                       "labels": {"show": True, "rotate": 0, "filter": False, "truncate": 100},
+                       "title": {"text": "처리 건수"}}],
+        "seriesParams": [{"show": True, "type": "area", "mode": "stacked",
+                          "data": {"label": "처리 건수", "id": "1"},
+                          "valueAxis": "ValueAxis-1", "drawLinesBetweenPoints": True,
+                          "interpolate": "linear", "lineWidth": 2, "showCircles": False}],
+        "addTooltip": True, "addLegend": True, "legendPosition": "right",
+        "times": [], "addTimeMarker": False, "labels": {},
+        "thresholdLine": {"show": False, "value": 10, "width": 1, "style": "full",
+                          "color": "#E7664C"},
+    },
+    "aggs": [
+        {"id": "1", "enabled": True, "type": "sum", "schema": "metric",
+         "params": {"field": "count", "customLabel": "처리 건수"}},
+        {"id": "2", "enabled": True, "type": "date_histogram", "schema": "segment",
+         "params": {"field": "timestamp", "useNormalizedEsInterval": True,
+                    "interval": "auto", "drop_partials": False, "min_doc_count": 1,
+                    "extended_bounds": {}}},
+        {"id": "3", "enabled": True, "type": "terms", "schema": "group",
+         "params": {"field": "service.keyword", "orderBy": "1", "order": "desc",
+                    "size": 5, "otherBucket": False, "missingBucket": False}},
+    ],
+}, dv=DV_TP_ID)
+
+
 # ── 공격 IP Top N 테이블 ─────────────────────────────────────
 viz("viz-detect-topip", "공격 IP Top 15", {
     "title": "공격 IP Top 15",
@@ -254,21 +308,24 @@ objs.append({
 
 # ── 대시보드 ─────────────────────────────────────────────────
 panels = [
-    # KPI 행
+    # 탐지 KPI 행
     ("viz-detect-kpi-total",   "visualization", "1", 0,  0, 12, 8),
     ("viz-detect-kpi-dos",     "visualization", "2", 12, 0, 12, 8),
     ("viz-detect-kpi-auth",    "visualization", "3", 24, 0, 12, 8),
     ("viz-detect-kpi-blocked", "visualization", "4", 36, 0, 12, 8),
+    # 실시간 흐름 행 (현재 처리율 + 서비스별 처리량 area)
+    ("viz-tp-rate",            "visualization", "11", 0,  8, 12, 12),
+    ("viz-tp-flow",            "visualization", "12", 12, 8, 36, 12),
     # Pod 수 행 (현재 / cron 최솟값 / 시간축 비교)
-    ("viz-pod-current",        "visualization", "8", 0,  8, 12, 10),
-    ("viz-pod-cronmin",        "visualization", "9", 12, 8, 12, 10),
-    ("viz-pod-trend",          "visualization", "10", 24, 8, 24, 10),
+    ("viz-pod-current",        "visualization", "8", 0, 20, 12, 10),
+    ("viz-pod-cronmin",        "visualization", "9", 12, 20, 12, 10),
+    ("viz-pod-trend",          "visualization", "10", 24, 20, 24, 10),
     # 탐지 추세
-    ("viz-detect-trend",       "visualization", "5", 0, 18, 48, 14),
+    ("viz-detect-trend",       "visualization", "5", 0, 30, 48, 14),
     # 공격 IP Top 15 (단독 행)
-    ("viz-detect-topip",       "visualization", "6", 0, 32, 48, 16),
+    ("viz-detect-topip",       "visualization", "6", 0, 44, 48, 16),
     # 인증 우회 상세 (단독 행)
-    ("search-detect-auth",     "search",        "7", 0, 48, 48, 16),
+    ("search-detect-auth",     "search",        "7", 0, 60, 48, 16),
 ]
 panels_json, refs = [], []
 for oid, otype, pi, x, y, w, h in panels:

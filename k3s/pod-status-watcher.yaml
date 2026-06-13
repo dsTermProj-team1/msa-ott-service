@@ -1,0 +1,179 @@
+# speed-consumer Pod 수를 ES(msa-pod-status)로 보고하는 watch 기반 이벤트 드리븐 워처.
+#  - CronJob 폴링(최대 1분 지연)을 대체: k8s watch API로 Deployment 변경을 구독 →
+#    KEDA 스케일 순간 readyReplicas 변화를 즉시 ES에 적재(+ ~20초 하트비트로 시계열 연속성).
+#  - cron 최솟값은 하드코딩 대신 ScaledObject(speed-consumer-scaler)의 cron 트리거를
+#    현재 KST 구간으로 매칭해 읽음(단일 출처 = KEDA).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+subjects:
+  - kind: ServiceAccount
+    name: pod-status-watcher
+    namespace: kafka
+roleRef:
+  kind: Role
+  name: pod-status-watcher
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-status-watcher-script
+  namespace: kafka
+data:
+  watch.py: |
+    import json, os, ssl, urllib.request, urllib.error
+    from datetime import datetime, timezone, timedelta
+
+    NS = "kafka"
+    DEPLOY = "speed-consumer"
+    SO = "speed-consumer-scaler"
+    ES = os.environ.get("ES_HOST", "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    HEARTBEAT = int(os.environ.get("HEARTBEAT_SEC", "20"))
+
+    TOKEN = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    HOST = os.environ["KUBERNETES_SERVICE_HOST"]
+    PORT = os.environ["KUBERNETES_SERVICE_PORT"]
+    BASE = f"https://{HOST}:{PORT}"
+    CTX = ssl.create_default_context(cafile=CA)
+
+    def api(path):
+        req = urllib.request.Request(BASE + path,
+                                     headers={"Authorization": f"Bearer {TOKEN}"})
+        return urllib.request.urlopen(req, context=CTX, timeout=HEARTBEAT + 15)
+
+    def cron_min():
+        # ScaledObject 의 cron 트리거를 현재 KST 구간으로 매칭 (단일 출처)
+        try:
+            so = json.load(api(f"/apis/keda.sh/v1alpha1/namespaces/{NS}/scaledobjects/{SO}"))
+        except Exception:
+            return None, None
+        kst_h = (datetime.now(timezone.utc) + timedelta(hours=9)).hour
+        for t in so.get("spec", {}).get("triggers", []):
+            if t.get("type") != "cron":
+                continue
+            m = t.get("metadata", {})
+            try:
+                sh = int(m["start"].split()[1])
+                eh = int(m["end"].split()[1])
+                dr = int(m["desiredReplicas"])
+            except Exception:
+                continue
+            if eh <= sh:
+                eh += 24
+            h = kst_h if kst_h >= sh else kst_h + 24
+            if sh <= h < eh:
+                return dr, f"{sh:02d}-{(eh % 24) or 24:02d}"
+        return None, None
+
+    def write(ready, desired):
+        mn, win = cron_min()
+        doc = {"timestamp": datetime.now(timezone.utc).isoformat(),
+               "component": "speed-consumer", "current_replicas": int(ready or 0),
+               "desired_replicas": int(desired or 0)}
+        if mn is not None:
+            doc["cron_min"] = mn
+            doc["window"] = win
+            doc["below_min"] = int(ready or 0) < mn
+        data = json.dumps(doc).encode()
+        r = urllib.request.Request(ES + "/msa-pod-status/_doc?refresh=true", data=data,
+                                   headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(r, timeout=10).read()
+        print("wrote:", doc, flush=True)
+
+    def snapshot():
+        d = json.load(api(f"/apis/apps/v1/namespaces/{NS}/deployments/{DEPLOY}"))
+        st = d.get("status", {})
+        return (int(st.get("readyReplicas", 0) or 0),
+                int(d.get("spec", {}).get("replicas", 0) or 0),
+                d["metadata"]["resourceVersion"])
+
+    print(f"[pod-status-watcher] watch {NS}/{DEPLOY} -> ES msa-pod-status 시작", flush=True)
+    last = None
+    while True:
+        try:
+            ready, desired, rv = snapshot()
+            write(ready, desired)          # 재연결마다 1회 = 하트비트
+            last = ready
+            path = (f"/apis/apps/v1/namespaces/{NS}/deployments"
+                    f"?fieldSelector=metadata.name={DEPLOY}"
+                    f"&watch=1&resourceVersion={rv}&timeoutSeconds={HEARTBEAT}")
+            for raw in api(path):
+                line = raw.decode("utf-8").strip()
+                if not line:
+                    continue
+                ev = json.loads(line)
+                obj = ev.get("object", {})
+                st = obj.get("status", {})
+                ready = int(st.get("readyReplicas", 0) or 0)
+                desired = int(obj.get("spec", {}).get("replicas", 0) or 0)
+                if ready != last:                 # 스케일 변화 → 즉시 적재
+                    write(ready, desired)
+                    last = ready
+        except Exception as e:
+            print("watch 재연결:", repr(e), flush=True)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-status-watcher
+  template:
+    metadata:
+      labels:
+        app: pod-status-watcher
+    spec:
+      serviceAccountName: pod-status-watcher
+      containers:
+        - name: watcher
+          image: python:3.12-slim
+          command: ["python", "-u", "/script/watch.py"]
+          env:
+            - name: ES_HOST
+              value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+            - name: HEARTBEAT_SEC
+              value: "20"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+      volumes:
+        - name: script
+          configMap:
+            name: pod-status-watcher-script

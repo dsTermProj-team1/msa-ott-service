@@ -57,14 +57,20 @@ speed layer가 적재하는 실시간 보안 탐지를 시각화한다. 생성�
 - `msa-detections` (시간 필드 `detected_at`) — speed-consumer/dos-aggregator 탐지
   - `attack_type="auth_bypass"`: `service`, `ip`, `uri`, `user_id`
   - `attack_type="dos"`: `ip`, `req_count`, `baseline_avg`, `threshold`, `multiplier`
-- `msa-pod-status` (시간 필드 `timestamp`) — **`pod-status-reporter` CronJob이 적재(실측)**
-  - `current_replicas`: speed-consumer Deployment의 `readyReplicas`
-  - `cron_min`: KEDA cron 트리거(KST 구간)의 최솟값 — `00-06=1 / 06-12=2 / 12-18=4 / 18-24=2`
-  - `window`, `below_min`
+- `msa-pod-status` (시간 필드 `timestamp`) — **`pod-status-watcher` Deployment가 적재(실측·이벤트 드리븐)**
+  - speed-consumer Deployment를 k8s watch API로 구독 → KEDA 스케일 순간 즉시 적재(+ ~20초 하트비트)
+  - `current_replicas`(=`readyReplicas`), `desired_replicas`
+  - `cron_min`/`window`: ScaledObject(`speed-consumer-scaler`)의 현재 KST cron 구간에서 조회(단일 출처)
+  - `below_min`
+- `msa-throughput` (시간 필드 `timestamp`) — **`log-throughput-reporter` Deployment가 적재(실측)**
+  - msa-logs를 독립 group으로 소비해 5초마다 서비스별 처리량을 보고
+  - `service`, `count`, `total`, `rate_per_sec`
 
 ## 포함 객체 (`msa-detections-dashboard.ndjson`)
 
 - **KPI(metric)**: 전체 탐지 / DoS / 인증 우회 / 차단 IP 수(DoS, `ip.keyword` cardinality)
+- **실시간 로그 처리량**: 현재 처리율(`rate_per_sec` 최신값) ·
+  서비스별 처리량 area(`count` 합, `service.keyword` 분할 stacked)
 - **현재 Pod 수 vs cron 최솟값**: 현재 Pod 수(`current_replicas` 최신값) ·
   cron 최솟값(`cron_min` 최신값) · 시간축 비교 line(step-after)
 - **탐지 추세**: `detected_at` date_histogram, `attack_type.keyword` 분할 stacked bar
@@ -91,8 +97,9 @@ curl -s "http://<node-ip>:30731/api/saved_objects/_export" \
 
 ## 파이프라인 / 데모 데이터
 
-- `현재 Pod 수`·`cron 최솟값`은 **실측**(reporter CronJob, `../pod-status-reporter.yaml`).
-  speed-consumer/dos-aggregator는 데스크탑 노드(`ubuntu-virtual-machine`)에 고정 배포.
-- `msa-detections` 탐지 문서는 트래픽(simulator)이 없을 때 데모용으로
-  `seed_sample_detections.py`로 채울 수 있다(최근 1시간 분포). 실파이프라인이
-  트래픽을 받으면 같은 인덱스에 실제 탐지가 쌓인다.
+- `현재 Pod 수`·`cron 최솟값`은 **실측**(watch 워처 `../pod-status-watcher.yaml`, KEDA ScaledObject 연동).
+  speed-consumer/dos-aggregator/throughput-reporter/traffic-sim은 데스크탑 노드
+  (`ubuntu-virtual-machine`)에 고정 배포. KEDA는 ghcr 접근 가능한 control-plane 노드에 고정.
+- 실시간 흐름은 `../traffic-sim.yaml`이 msa-logs에 상시 트래픽을 발행해 살린다.
+- `msa-detections` 탐지 문서는 트래픽이 없을 때 데모용으로 `seed_sample_detections.py`로도
+  채울 수 있다(최근 1시간 분포). 실파이프라인이 트래픽을 받으면 같은 인덱스에 실제 탐지가 쌓인다.

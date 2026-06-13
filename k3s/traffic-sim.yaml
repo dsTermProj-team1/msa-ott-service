@@ -1,0 +1,93 @@
+# 데모용 상시 트래픽 제너레이터 — msa-logs 에 끊김 없는 정상 트래픽 + 주기적 공격을 produce.
+#  (실제 HTTP 스택 simulator 대신, 같은 로그 스키마로 직접 발행해 실시간 흐름을 살린다.)
+#  - 정상: 매 2초 20~40건(유효 토큰)        → 실시간 처리량(흐름)
+#  - 인증 우회: 주기적으로 토큰 없이 /stream  → speed-consumer 즉시 탐지
+#  - DoS: 주기적으로 한 IP 폭증(현재 윈도우)   → dos-aggregator 윈도우 닫힐 때 탐지
+#  새 이미지 빌드 없이 speed-consumer 이미지(kafka-python) 재사용.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traffic-sim-script
+  namespace: kafka
+data:
+  sim.py: |
+    import json, os, time, random
+    from datetime import datetime, timezone
+    from kafka import KafkaProducer
+
+    BOOT = os.getenv("KAFKA_BOOTSTRAP_SERVERS",
+                     "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
+    TOPIC = "msa-logs"
+    SERVICES = ["auth-service", "content-service", "streaming-service"]
+    p = KafkaProducer(bootstrap_servers=BOOT.split(","),
+                      value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                      acks="all")
+    print("[traffic-sim] msa-logs 상시 트래픽 시작")
+
+    def send(now, svc, ip, uri, uid, valid):
+        p.send(TOPIC, {"timestamp": now, "service": svc, "ip": ip, "uri": uri,
+                       "user_id": uid, "has_valid_token": valid})
+
+    i = 0
+    while True:
+        now = datetime.now(timezone.utc).isoformat()
+        # 정상 트래픽
+        for _ in range(random.randint(20, 40)):
+            ip = f"10.0.{random.randint(0, 3)}.{random.randint(1, 250)}"
+            svc = random.choice(SERVICES)
+            uri = random.choice(["/content/list", f"/stream/start/{random.randint(1, 40)}",
+                                 "/auth/login"])
+            send(now, svc, ip, uri, f"user_{random.randint(0, 999):04d}", True)
+        # 인증 우회(주기적): 토큰 없이 /stream 직접 접근
+        if i % 8 == 0:
+            for _ in range(random.randint(2, 5)):
+                ip = f"198.51.100.{random.randint(1, 254)}"
+                send(now, "streaming-service", ip,
+                     f"/stream/start/{random.randint(1, 40)}", None, False)
+        # DoS(주기적): 한 IP가 현재 윈도우에서 폭증
+        if i % 30 == 0 and i > 0:
+            atk = f"203.0.113.{random.randint(200, 254)}"
+            for _ in range(90):
+                send(now, "streaming-service", atk, "/stream/start/1057265",
+                     "user_0000", True)
+            print(f"[traffic-sim] DoS 스파이크 발행 ip={atk}")
+        p.flush()
+        i += 1
+        time.sleep(2)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-sim
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-sim
+  template:
+    metadata:
+      labels:
+        app: traffic-sim
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      containers:
+        - name: sim
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "/script/sim.py"]
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: script
+          configMap:
+            name: traffic-sim-script
