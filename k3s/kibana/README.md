@@ -9,13 +9,17 @@ log-pipeline 집계 결과를 시각화하는 Kibana Saved Objects를 NDJSON으�
   - `msa-batch` (시간 필드 `window_start`) — 1차 집계(시간당 서비스별 요청/에러)
   - `msa-baseline` (시간 필드 `ref_date`) — 2차 baseline(구간별 권장 Pod 수)
 - **시각화**
+  - 요약 지표 (metric): 총 요청수 / 4xx / 5xx / 평균 에러율
   - 서비스별 시간당 요청수 (line, `service.keyword` 분할)
-  - 시간대별 4xx/5xx 에러 (bar, `count_4xx`/`count_5xx` 합계)
-  - 구간별 권장 Pod 수 (bar, `ref_date`별 `window.keyword` 분할, max replicas)
-- **대시보드**: `MSA 배치 모니터링` (위 3개 패널, 기본 기간 06-06~06-15)
+  - 시간대별 4xx/5xx 에러 (bar stacked, `count_4xx`/`count_5xx` 합계)
+  - 서비스별 에러율 추세 (line, `error_rate` 평균, `service.keyword` 분할)
+  - 구간별 권장 Pod 수 (grouped bar, `ref_date`별 `window.keyword` 시간순, max replicas, Y 0~6)
+  - 구간별 권장 Pod 수 표 (Lens datatable, 날짜=행 / 구간=열 전치, max replicas)
+- **대시보드**: `MSA 배치 모니터링` (위 6개 패널, 기본 기간 `now-7d/d ~ now` = 최근 1주일)
 
 > `service`/`window` 필드는 ES에서 `text`+`.keyword` 멀티필드로 매핑되므로
-> terms 집계는 반드시 `*.keyword` 를 사용한다.
+> terms 집계는 반드시 `*.keyword` 를 사용한다. 또한 legacy 시각화는
+> `searchSourceJSON` 안에 `indexRefName` 이 있어야 데이터 뷰와 연결된다.
 
 ## Import
 
