@@ -61,6 +61,8 @@ speed layer가 적재하는 실시간 보안 탐지를 시각화한다. 생성�
   - speed-consumer Deployment를 k8s watch API로 구독 → KEDA 스케일 순간 즉시 적재(+ ~20초 하트비트)
   - `current_replicas`(=`readyReplicas`), `desired_replicas`
   - `cron_min`/`window`: ScaledObject(`speed-consumer-scaler`)의 현재 KST cron 구간에서 조회(단일 출처)
+  - `kafka_lag`: KEDA가 만든 HPA의 `s0-kafka` metric(averageValue × currentReplicas) = consumer group lag.
+    별도 reporter 없이 워처가 HPA에서 직접 읽음(KEDA 스케일 트리거 값과 동일 출처)
   - `below_min`
 - `msa-throughput` (시간 필드 `timestamp`) — **`log-throughput-reporter` Deployment가 적재(실측)**
   - msa-logs를 독립 group으로 소비해 5초마다 서비스별 처리량을 보고
@@ -71,8 +73,9 @@ speed layer가 적재하는 실시간 보안 탐지를 시각화한다. 생성�
 - **KPI(metric)**: 전체 탐지 / DoS / 인증 우회 / 차단 IP 수(DoS, `ip.keyword` cardinality)
 - **실시간 로그 처리량**: 현재 처리율(`rate_per_sec` 최신값) ·
   서비스별 처리량 area(`count` 합, `service.keyword` 분할 stacked)
-- **현재 Pod 수 vs cron 최솟값**: 현재 Pod 수(`current_replicas` 최신값) ·
-  cron 최솟값(`cron_min` 최신값) · 시간축 비교 line(step-after)
+- **현재 Pod 수 / cron 최솟값 / 현재 Kafka lag / 시간축 비교**: 현재 Pod 수(`current_replicas` 최신값) ·
+  cron 최솟값(`cron_min` 최신값) · 현재 Kafka lag(`kafka_lag` 최신값) ·
+  Pod 수 vs cron 최솟값 비교 line(step-after)
 - **탐지 추세**: `detected_at` date_histogram, `attack_type.keyword` 분할 stacked bar
 - **공격 IP Top 15**: `ip.keyword` terms + 탐지 건수 / 최대 req_count / 임계값 (단독 행)
 - **인증 우회 상세**: 저장 검색(Discover) `attack_type="auth_bypass"`,

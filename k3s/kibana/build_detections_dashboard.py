@@ -177,6 +177,10 @@ viz("viz-pod-cronmin", "cron 최솟값 (현재 구간)",
     metric_state("cron 최솟값", latest_metric("cron_min", "cron 최솟값")),
     dv=DV_POD_ID)
 
+viz("viz-lag-current", "현재 Kafka lag",
+    metric_state("Kafka lag", latest_metric("kafka_lag", "Kafka lag")),
+    dv=DV_POD_ID)
+
 viz("viz-pod-trend", "Pod 수 vs cron 최솟값", {
     "title": "Pod 수 vs cron 최솟값",
     "type": "line",
@@ -316,10 +320,11 @@ panels = [
     # 실시간 흐름 행 (현재 처리율 + 서비스별 처리량 area)
     ("viz-tp-rate",            "visualization", "11", 0,  8, 12, 12),
     ("viz-tp-flow",            "visualization", "12", 12, 8, 36, 12),
-    # Pod 수 행 (현재 / cron 최솟값 / 시간축 비교)
-    ("viz-pod-current",        "visualization", "8", 0, 20, 12, 10),
-    ("viz-pod-cronmin",        "visualization", "9", 12, 20, 12, 10),
-    ("viz-pod-trend",          "visualization", "10", 24, 20, 24, 10),
+    # Pod 수 행 (현재 / cron 최솟값 / 현재 lag / 시간축 비교)
+    ("viz-pod-current",        "visualization", "8", 0, 20, 10, 10),
+    ("viz-pod-cronmin",        "visualization", "9", 10, 20, 10, 10),
+    ("viz-lag-current",        "visualization", "13", 20, 20, 10, 10),
+    ("viz-pod-trend",          "visualization", "10", 30, 20, 18, 10),
     # 탐지 추세
     ("viz-detect-trend",       "visualization", "5", 0, 30, 48, 14),
     # 공격 IP Top 15 (단독 행)
@@ -346,7 +351,7 @@ objs.append({
         "timeRestore": True,
         "timeFrom": "now-1h",
         "timeTo": "now",
-        "refreshInterval": {"pause": False, "value": 15000},
+        "refreshInterval": {"pause": False, "value": 5000},
         "optionsJSON": json.dumps({"useMargins": True, "syncColors": False,
                                    "syncCursor": True, "syncTooltips": False,
                                    "hidePanelTitles": False}),
