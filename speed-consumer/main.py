@@ -12,6 +12,7 @@ speed-consumer (1단계) — KEDA가 lag으로 스케일하는 컨슈머.
 """
 import os
 import json
+import signal
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -43,6 +44,14 @@ producer = KafkaProducer(
 local_counts = defaultdict(int)     # (window, ip) -> 이 pod 누적 카운트
 max_local_window = 0
 blocked = {}                        # ip -> 차단 만료 epoch
+
+_shutdown = False                   # SIGTERM 수신 플래그 (graceful 종료)
+
+
+def _on_term(signum, frame):
+    global _shutdown
+    _shutdown = True
+    print(f"[shutdown] signal {signum} 수신 — 현재 배치 commit 후 종료", flush=True)
 
 
 def parse_ts(s):
@@ -150,8 +159,10 @@ def main():
     )
     print(f"[speed-consumer] pod={POD_ID} group={GROUP_ID} src={SRC_TOPIC} -> {PARTIAL_TOPIC} (block={BLOCKED_TOPIC}) 시작")
 
+    signal.signal(signal.SIGTERM, _on_term)   # 스케일다운 시 graceful 종료
+    signal.signal(signal.SIGINT, _on_term)
     last_flush = time.time()
-    while True:
+    while not _shutdown:
         apply_blocks(block_consumer)        # 차단 목록 먼저 갱신
 
         batch = consumer.poll(timeout_ms=1000)
@@ -171,6 +182,21 @@ def main():
         if time.time() - last_flush >= FLUSH_INTERVAL:
             flush()
             last_flush = time.time()
+
+    # ── graceful 종료: SIGTERM 받으면 현재 처리분 flush+commit 후 그룹에서 깔끔히 이탈 ──
+    print("[shutdown] 마지막 flush/commit 후 컨슈머 종료", flush=True)
+    try:
+        flush()
+    except Exception as e:
+        print(f"[shutdown] flush 실패(무시): {e}")
+    try:
+        consumer.commit()
+    except Exception as e:
+        print(f"[shutdown] commit 실패(무시): {e}")
+    try:
+        consumer.close()                    # 그룹 leave → 리밸런스 빠르게 정리
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
