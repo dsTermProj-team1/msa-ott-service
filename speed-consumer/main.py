@@ -161,7 +161,12 @@ def main():
                     handle(json.loads(m.value))
                 except Exception:
                     continue
-        consumer.commit()                   # 처리분(차단 IP 포함) offset 커밋
+        try:
+            consumer.commit()               # 처리분(차단 IP 포함) offset 커밋
+        except Exception as e:
+            # KEDA 스케일 시 그룹 리밸런스 중이면 commit 실패 → 죽지 말고 스킵
+            # (다음 poll()이 리밸런스를 마치고, 미커밋분은 재처리=at-least-once)
+            print(f"[commit skip] 리밸런스 중: {e}")
 
         if time.time() - last_flush >= FLUSH_INTERVAL:
             flush()
