@@ -15,7 +15,7 @@ data:
     from kafka import KafkaProducer
 
     BOOT = "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
-    SERVICES = ["auth-service", "content-service", "streaming-service"]
+    SERVICES = ["auth", "content", "streaming"]
     DURATION = int(os.getenv("DURATION_SEC", "60"))
     THREADS = int(os.getenv("THREADS", "4"))
     counter = [0]

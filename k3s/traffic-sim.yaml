@@ -18,7 +18,7 @@ data:
     BOOT = os.getenv("KAFKA_BOOTSTRAP_SERVERS",
                      "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
     TOPIC = "msa-logs"
-    SERVICES = ["auth-service", "content-service", "streaming-service"]
+    SERVICES = ["auth", "content", "streaming"]
     p = KafkaProducer(bootstrap_servers=BOOT.split(","),
                       value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                       acks="all")
@@ -48,13 +48,13 @@ data:
         if i % 8 == 0:
             for _ in range(random.randint(2, 5)):
                 ip = f"198.51.100.{random.randint(1, 254)}"
-                send(now, "streaming-service", ip,
+                send(now, "streaming", ip,
                      f"/stream/start/{random.randint(1, 40)}", None, False, "GET", 401)
         # DoS(주기적): 한 IP가 현재 윈도우에서 폭증
         if i % 30 == 0 and i > 0:
             atk = f"203.0.113.{random.randint(200, 254)}"
             for _ in range(90):
-                send(now, "streaming-service", atk, "/stream/start/1057265",
+                send(now, "streaming", atk, "/stream/start/1057265",
                      "user_0000", True, "GET", 200)
             print(f"[traffic-sim] DoS 스파이크 발행 ip={atk}")
         p.flush()

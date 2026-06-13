@@ -21,7 +21,7 @@ random.seed(7)
 now = datetime.now(timezone.utc)
 INDEX = "msa-detections"
 
-SERVICES = ["auth-service", "content-service", "streaming-service"]
+SERVICES = ["auth", "content", "streaming"]
 URIS = ["/stream/movie-101", "/stream/series-22/ep-3", "/stream/live-7", "/stream/movie-88"]
 ATTACKER_IPS = ["203.0.113.7", "203.0.113.42", "198.51.100.9", "192.0.2.123", "198.51.100.77"]
 NORMAL_BASELINE_AVG = 120.0
