@@ -44,3 +44,55 @@ curl -s "http://<node-ip>:30731/api/saved_objects/_export" \
   -d '{"objects":[{"type":"dashboard","id":"dash-msa-monitoring"}],"includeReferencesDeep":true}' \
   > k3s/kibana/msa-monitoring-dashboard.ndjson
 ```
+
+---
+
+# 실시간 탐지 대시보드 (speed layer)
+
+speed layer가 적재하는 실시간 보안 탐지를 시각화한다. 생성기는
+`build_detections_dashboard.py`, 산출물은 `msa-detections-dashboard.ndjson`.
+
+## 데이터 소스
+
+- `msa-detections` (시간 필드 `detected_at`) — speed-consumer/dos-aggregator 탐지
+  - `attack_type="auth_bypass"`: `service`, `ip`, `uri`, `user_id`
+  - `attack_type="dos"`: `ip`, `req_count`, `baseline_avg`, `threshold`, `multiplier`
+- `msa-pod-status` (시간 필드 `timestamp`) — **`pod-status-reporter` CronJob이 적재(실측)**
+  - `current_replicas`: speed-consumer Deployment의 `readyReplicas`
+  - `cron_min`: KEDA cron 트리거(KST 구간)의 최솟값 — `00-06=1 / 06-12=2 / 12-18=4 / 18-24=2`
+  - `window`, `below_min`
+
+## 포함 객체 (`msa-detections-dashboard.ndjson`)
+
+- **KPI(metric)**: 전체 탐지 / DoS / 인증 우회 / 차단 IP 수(DoS, `ip.keyword` cardinality)
+- **현재 Pod 수 vs cron 최솟값**: 현재 Pod 수(`current_replicas` 최신값) ·
+  cron 최솟값(`cron_min` 최신값) · 시간축 비교 line(step-after)
+- **탐지 추세**: `detected_at` date_histogram, `attack_type.keyword` 분할 stacked bar
+- **공격 IP Top 15**: `ip.keyword` terms + 탐지 건수 / 최대 req_count / 임계값 (단독 행)
+- **인증 우회 상세**: 저장 검색(Discover) `attack_type="auth_bypass"`,
+  컬럼 `service`/`ip`/`uri`/`user_id` (단독 행)
+- **대시보드** `MSA 실시간 보안 탐지`: 기본 기간 `now-1h ~ now`,
+  자동 새로고침 15초(`refreshInterval pause:false`)
+
+## 빌드 / Import / Export
+
+```bash
+# 생성
+python3 k3s/kibana/build_detections_dashboard.py > /tmp/detections-import.ndjson
+# import
+curl -s "http://<node-ip>:30731/api/saved_objects/_import?overwrite=true" \
+  -H "kbn-xsrf: true" --form file=@/tmp/detections-import.ndjson
+# export(깊은 참조 포함) → repo 갱신
+curl -s "http://<node-ip>:30731/api/saved_objects/_export" \
+  -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+  -d '{"objects":[{"type":"dashboard","id":"dash-msa-detections"}],"includeReferencesDeep":true}' \
+  > k3s/kibana/msa-detections-dashboard.ndjson
+```
+
+## 파이프라인 / 데모 데이터
+
+- `현재 Pod 수`·`cron 최솟값`은 **실측**(reporter CronJob, `../pod-status-reporter.yaml`).
+  speed-consumer/dos-aggregator는 데스크탑 노드(`ubuntu-virtual-machine`)에 고정 배포.
+- `msa-detections` 탐지 문서는 트래픽(simulator)이 없을 때 데모용으로
+  `seed_sample_detections.py`로 채울 수 있다(최근 1시간 분포). 실파이프라인이
+  트래픽을 받으면 같은 인덱스에 실제 탐지가 쌓인다.
