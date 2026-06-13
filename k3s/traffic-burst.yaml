@@ -32,7 +32,8 @@ data:
             for _ in range(500):
                 ip = f"10.{random.randint(0,99)}.{random.randint(0,255)}.{random.randint(1,254)}"
                 p.send("msa-logs", {"timestamp": now, "service": random.choice(SERVICES),
-                                    "ip": ip, "uri": "/content/list",
+                                    "ip": ip, "method": "GET", "uri": "/content/list",
+                                    "status": 200,
                                     "user_id": f"user_{random.randint(0,99999)}",
                                     "has_valid_token": True})
                 n += 1

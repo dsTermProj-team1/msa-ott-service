@@ -24,32 +24,38 @@ data:
                       acks="all")
     print("[traffic-sim] msa-logs 상시 트래픽 시작")
 
-    def send(now, svc, ip, uri, uid, valid):
-        p.send(TOPIC, {"timestamp": now, "service": svc, "ip": ip, "uri": uri,
-                       "user_id": uid, "has_valid_token": valid})
+    def send(now, svc, ip, uri, uid, valid, method="GET", status=200):
+        # 필수 스키마: timestamp/service/ip/method/uri/status/has_valid_token
+        # (speed layer는 일부만 쓰지만 batch 컨슈머는 7개 전부 검증함)
+        p.send(TOPIC, {"timestamp": now, "service": svc, "ip": ip, "method": method,
+                       "uri": uri, "status": status, "user_id": uid,
+                       "has_valid_token": valid})
 
     i = 0
     while True:
         now = datetime.now(timezone.utc).isoformat()
-        # 정상 트래픽
+        # 정상 트래픽 (소량 4xx/5xx 섞어 배치 에러율 패널도 살림)
         for _ in range(random.randint(20, 40)):
             ip = f"10.0.{random.randint(0, 3)}.{random.randint(1, 250)}"
             svc = random.choice(SERVICES)
             uri = random.choice(["/content/list", f"/stream/start/{random.randint(1, 40)}",
                                  "/auth/login"])
-            send(now, svc, ip, uri, f"user_{random.randint(0, 999):04d}", True)
-        # 인증 우회(주기적): 토큰 없이 /stream 직접 접근
+            method = "POST" if uri == "/auth/login" else "GET"
+            r = random.random()
+            status = 500 if r < 0.03 else 404 if r < 0.08 else 200
+            send(now, svc, ip, uri, f"user_{random.randint(0, 999):04d}", True, method, status)
+        # 인증 우회(주기적): 토큰 없이 /stream 직접 접근 → 401
         if i % 8 == 0:
             for _ in range(random.randint(2, 5)):
                 ip = f"198.51.100.{random.randint(1, 254)}"
                 send(now, "streaming-service", ip,
-                     f"/stream/start/{random.randint(1, 40)}", None, False)
+                     f"/stream/start/{random.randint(1, 40)}", None, False, "GET", 401)
         # DoS(주기적): 한 IP가 현재 윈도우에서 폭증
         if i % 30 == 0 and i > 0:
             atk = f"203.0.113.{random.randint(200, 254)}"
             for _ in range(90):
                 send(now, "streaming-service", atk, "/stream/start/1057265",
-                     "user_0000", True)
+                     "user_0000", True, "GET", 200)
             print(f"[traffic-sim] DoS 스파이크 발행 ip={atk}")
         p.flush()
         i += 1
