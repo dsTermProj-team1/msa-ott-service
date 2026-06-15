@@ -1,0 +1,85 @@
+# 데모용 부하 burst — msa-logs 에 정상 트래픽을 폭증 produce 해 Kafka lag 을 쌓고
+# KEDA가 speed-consumer 를 스케일업하게 만든다. (탐지 스팸 없이 lag만 키우려고 유효 토큰 + 다수 IP)
+#  시작: kubectl apply -f k3s/traffic-burst.yaml
+#  재실행: kubectl delete -f k3s/traffic-burst.yaml && kubectl apply -f k3s/traffic-burst.yaml
+#  DURATION_SEC/THREADS 로 강도 조절. speed-consumer 이미지(kafka-python) 재사용.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traffic-burst-script
+  namespace: kafka
+data:
+  burst.py: |
+    import os, json, time, random, threading
+    from datetime import datetime, timezone
+    from kafka import KafkaProducer
+
+    BOOT = "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+    SERVICES = ["auth", "content", "streaming"]
+    DURATION = int(os.getenv("DURATION_SEC", "60"))
+    THREADS = int(os.getenv("THREADS", "4"))
+    counter = [0]
+    lock = threading.Lock()
+
+    def worker(wid):
+        p = KafkaProducer(bootstrap_servers=BOOT.split(","),
+                          value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                          acks=1, linger_ms=20, batch_size=131072, compression_type="gzip")
+        end = time.time() + DURATION
+        n = 0
+        while time.time() < end:
+            now = datetime.now(timezone.utc).isoformat()
+            for _ in range(500):
+                ip = f"10.{random.randint(0,99)}.{random.randint(0,255)}.{random.randint(1,254)}"
+                p.send("msa-logs", {"timestamp": now, "service": random.choice(SERVICES),
+                                    "ip": ip, "method": "GET", "uri": "/content/list",
+                                    "status": 200,
+                                    "user_id": f"user_{random.randint(0,99999)}",
+                                    "has_valid_token": True})
+                n += 1
+        p.flush()
+        with lock:
+            counter[0] += n
+        print(f"thread {wid} produced {n}", flush=True)
+
+    ts = [threading.Thread(target=worker, args=(i,)) for i in range(THREADS)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    print(f"[burst] total produced {counter[0]} in {DURATION}s", flush=True)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: traffic-burst
+  namespace: kafka
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      restartPolicy: Never
+      containers:
+        - name: burst
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "/script/burst.py"]
+          env:
+            - name: DURATION_SEC
+              value: "60"
+            - name: THREADS
+              value: "4"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "1500m"
+      volumes:
+        - name: script
+          configMap:
+            name: traffic-burst-script

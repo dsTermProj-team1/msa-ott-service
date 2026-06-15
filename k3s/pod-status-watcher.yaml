@@ -1,0 +1,195 @@
+# speed-consumer Pod 수 + Kafka lag 을 ES(msa-pod-status)로 보고하는 워처(5초 폴링).
+#  - 파드 수: Deployment .status.readyReplicas 를 5초마다 조회(실측).
+#  - Kafka lag: consumer group offset 을 Kafka에서 직접 계산(HPA 15초 갱신에 안 묶임) →
+#    5초마다 최신 lag 적재. KEDA 스케일 트리거와 같은 값.
+#  - cron 최솟값: ScaledObject(speed-consumer-scaler)의 현재 KST cron 구간에서 조회(단일 출처).
+#  speed-consumer 이미지(kafka-python 포함) 재사용, 데스크탑 노드 고정.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+subjects:
+  - kind: ServiceAccount
+    name: pod-status-watcher
+    namespace: kafka
+roleRef:
+  kind: Role
+  name: pod-status-watcher
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-status-watcher-script
+  namespace: kafka
+data:
+  watch.py: |
+    import json, os, ssl, time, urllib.request
+    from datetime import datetime, timezone, timedelta
+    from kafka import KafkaConsumer, KafkaAdminClient
+
+    NS = "kafka"
+    DEPLOY = "speed-consumer"
+    SO = "speed-consumer-scaler"
+    GROUP = os.environ.get("GROUP", "speed-layer-group")
+    TOPIC = os.environ.get("TOPIC", "msa-logs")
+    ES = os.environ.get("ES_HOST", "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    BOOT = os.environ.get("KAFKA_BOOTSTRAP_SERVERS",
+                          "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
+    HEARTBEAT = int(os.environ.get("HEARTBEAT_SEC", "5"))
+
+    TOKEN = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    HOST = os.environ["KUBERNETES_SERVICE_HOST"]
+    PORT = os.environ["KUBERNETES_SERVICE_PORT"]
+    BASE = f"https://{HOST}:{PORT}"
+    CTX = ssl.create_default_context(cafile=CA)
+
+    _admin = KafkaAdminClient(bootstrap_servers=BOOT.split(","))
+    _cons = KafkaConsumer(bootstrap_servers=BOOT.split(","), enable_auto_commit=False)
+
+    def api(path):
+        req = urllib.request.Request(BASE + path,
+                                     headers={"Authorization": f"Bearer {TOKEN}"})
+        return urllib.request.urlopen(req, context=CTX, timeout=HEARTBEAT + 15)
+
+    def kafka_lag():
+        # consumer group offset 을 Kafka에서 직접 계산 (HPA 갱신주기에 안 묶임)
+        try:
+            offs = _admin.list_consumer_group_offsets(GROUP)
+            tps = [tp for tp in offs if tp.topic == TOPIC]
+            if not tps:
+                return 0
+            end = _cons.end_offsets(tps)
+            lag = 0
+            for tp in tps:
+                co = offs[tp].offset
+                co = 0 if (co is None or co < 0) else co
+                lag += max(end.get(tp, 0) - co, 0)
+            return int(lag)
+        except Exception:
+            return None
+
+    def cron_min():
+        try:
+            so = json.load(api(f"/apis/keda.sh/v1alpha1/namespaces/{NS}/scaledobjects/{SO}"))
+        except Exception:
+            return None, None
+        kst_h = (datetime.now(timezone.utc) + timedelta(hours=9)).hour
+        for t in so.get("spec", {}).get("triggers", []):
+            if t.get("type") != "cron":
+                continue
+            m = t.get("metadata", {})
+            try:
+                sh = int(m["start"].split()[1]); eh = int(m["end"].split()[1])
+                dr = int(m["desiredReplicas"])
+            except Exception:
+                continue
+            if eh <= sh:
+                eh += 24
+            h = kst_h if kst_h >= sh else kst_h + 24
+            if sh <= h < eh:
+                return dr, f"{sh:02d}-{(eh % 24) or 24:02d}"
+        return None, None
+
+    def write(ready, desired):
+        mn, win = cron_min()
+        lag = kafka_lag()
+        doc = {"timestamp": datetime.now(timezone.utc).isoformat(),
+               "component": "speed-consumer", "current_replicas": int(ready or 0),
+               "desired_replicas": int(desired or 0)}
+        if lag is not None:
+            doc["kafka_lag"] = lag
+        if mn is not None:
+            doc["cron_min"] = mn; doc["window"] = win
+            doc["below_min"] = int(ready or 0) < mn
+        r = urllib.request.Request(ES + "/msa-pod-status/_doc?refresh=true",
+                                   data=json.dumps(doc).encode(),
+                                   headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(r, timeout=10).read()
+        print("wrote:", doc, flush=True)
+
+    def snapshot():
+        d = json.load(api(f"/apis/apps/v1/namespaces/{NS}/deployments/{DEPLOY}"))
+        st = d.get("status", {})
+        return (int(st.get("readyReplicas", 0) or 0),
+                int(d.get("spec", {}).get("replicas", 0) or 0),
+                d["metadata"]["resourceVersion"])
+
+    print(f"[pod-status-watcher] poll {NS}/{DEPLOY} + Kafka lag -> ES msa-pod-status (every {HEARTBEAT}s)", flush=True)
+    while True:
+        try:
+            ready, desired, _ = snapshot()   # Deployment .status.readyReplicas (실측)
+            write(ready, desired)
+        except Exception as e:
+            print("err:", repr(e), flush=True)
+        time.sleep(HEARTBEAT)                # 백오프 보장 — 스핀 방지
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-status-watcher
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-status-watcher
+  template:
+    metadata:
+      labels:
+        app: pod-status-watcher
+    spec:
+      serviceAccountName: pod-status-watcher
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      containers:
+        - name: watcher
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "/script/watch.py"]
+          env:
+            - name: ES_HOST
+              value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: GROUP
+              value: "speed-layer-group"
+            - name: TOPIC
+              value: "msa-logs"
+            - name: HEARTBEAT_SEC
+              value: "5"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: script
+          configMap:
+            name: pod-status-watcher-script

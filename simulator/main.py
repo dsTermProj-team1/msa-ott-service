@@ -13,7 +13,12 @@ AGE_GROUPS = ["10대", "20-30대", "40대이상"]
 GENRES = ["액션", "드라마", "애니", "코미디"]
 TIME_SLOTS = ["오전", "오후", "저녁"]
 
-NUM_USERS = 1000
+NUM_USERS = int(os.getenv("NUM_USERS", "1000"))
+
+# 데모/영상용 대기시간 — env로 조절 (미설정 시 원래 값 유지)
+BASELINE_WAIT_SEC = int(os.getenv("BASELINE_WAIT_SEC", "90"))   # 1→2단계 사이 기준값 수립 대기
+ATTACK_DELAY_SEC  = int(os.getenv("ATTACK_DELAY_SEC", "30"))    # 2단계에서 정상 먼저 흘리는 시간
+DOS_DURATION_SEC  = int(os.getenv("DOS_DURATION_SEC", "30"))    # DoS 공격 지속
 
 # 닐슨코리아 + 왓챠피디아 2023
 AGE_GENRE_BASE = {
@@ -178,7 +183,7 @@ def dos_attack():
         t.start()
         threads.append(t)
 
-    time.sleep(30)  # 30초 공격
+    time.sleep(DOS_DURATION_SEC)  # DoS 공격 지속
     stop_event.set()
     print("DoS 공격 종료")
 
@@ -199,15 +204,15 @@ def run():
     print(f"1단계: 정상 유저 {len(users)}명 시뮬레이션 시작 (기준값 수립)")
     with ThreadPoolExecutor(max_workers=20) as executor:
         executor.map(simulate_user, users)
-    print("1단계 완료. Spark 기준값 수립 대기 중 (90초)")
-    time.sleep(90)
+    print(f"1단계 완료. Spark 기준값 수립 대기 중 ({BASELINE_WAIT_SEC}초)")
+    time.sleep(BASELINE_WAIT_SEC)
 
     # 2단계: 정상 유저 200명 + 공격자 동시
     users2 = create_user_patterns()
     print(f"2단계: 정상 유저 {len(users2)}명 + 공격자 동시 시작")
 
     def run_attack():
-        time.sleep(30)  # 정상 유저 먼저 30초
+        time.sleep(ATTACK_DELAY_SEC)  # 정상 유저 먼저
         t1 = threading.Thread(target=dos_attack)
         t2 = threading.Thread(target=auth_bypass)
         t1.start()

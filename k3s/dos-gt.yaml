@@ -1,0 +1,121 @@
+# 이상탐지 식별률(재현율/정밀도) 검증용 트래픽 생성기 + 정답지(GT) 발행.
+#  - Kafka 직접 주입(msa-logs) — HTTP 시뮬레이터는 단일 파드 IP라 DoS 식별 불가하므로 IP를 다양화.
+#  - 공격 IP는 결정론적: 203.0.113.10 .. (10+N_ATTACKERS-1)  → 정답지를 로그 없이도 재현 가능.
+#  - 정상 트래픽: 다수 IP·저빈도(threshold 아래) → 오탐(FP) 0 유도.
+#  - 인증우회: 토큰 없이 /stream 직접(401) AUTH_BYPASS_N건 → speed-consumer 단건 탐지.
+#  - DoS: 고정 공격 IP가 윈도우당 ATTACK_REQS건 폭증(현재 threshold=600 초과) → aggregator 윈도우 닫힐 때 탐지.
+#  speed-consumer 이미지(kafka-python) 재사용. 실행 전 traffic-sim 은 반드시 replicas=0.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dos-gt-script
+  namespace: kafka
+data:
+  sim_gt.py: |
+    import os, json, time, random
+    from datetime import datetime, timezone
+    from kafka import KafkaProducer
+
+    BOOT = os.getenv("KAFKA_BOOTSTRAP_SERVERS",
+                     "msa-kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
+    TOPIC = "msa-logs"
+    N_ATTACKERS   = int(os.getenv("N_ATTACKERS", "200"))    # 공격 IP 수 = DoS 정답지(GT) 크기
+    ATTACK_REQS   = int(os.getenv("ATTACK_REQS", "250"))    # 공격 IP당 매 iteration 폭증량 (baseline*5 한참 초과)
+    AUTH_BYPASS_N = int(os.getenv("AUTH_BYPASS_N", "2000")) # 토큰 없는 /stream 직접 접근 건수(단건 탐지)
+    NORMAL_IPS    = int(os.getenv("NORMAL_IPS", "60"))
+    WARMUP_SEC    = int(os.getenv("WARMUP_SEC", "170"))     # 공격 전 baseline 2윈도우(60s+watermark 30s)가 마감되도록 충분히
+    ATTACK_SEC    = int(os.getenv("ATTACK_SEC", "40"))      # DoS 주입 지속(볼륨 상한 ≈ N_ATTACKERS*ATTACK_REQS*ATTACK_SEC/2)
+    DURATION_SEC  = int(os.getenv("DURATION_SEC", "320"))   # warmup + 공격 + 공격윈도우 마감(watermark)
+    SERVICES = ["auth", "content", "streaming"]
+
+    ATTACKERS = [f"203.0.113.{10 + i}" for i in range(N_ATTACKERS)]
+
+    p = KafkaProducer(bootstrap_servers=BOOT.split(","),
+                      value_serializer=lambda v: json.dumps(v).encode("utf-8"), acks="all")
+
+    def emit(now, svc, ip, uri, uid, valid, method="GET", status=200):
+        p.send(TOPIC, {"timestamp": now, "service": svc, "ip": ip, "method": method,
+                       "uri": uri, "status": status, "user_id": uid, "has_valid_token": valid})
+
+    def print_gt():
+        print("=GT_DOS_BEGIN=", flush=True)
+        for ip in ATTACKERS:
+            print(f"GT_DOS_IP {ip}", flush=True)
+        print("=GT_DOS_END=", flush=True)
+        print(f"GT_AUTHBYPASS_COUNT {AUTH_BYPASS_N}", flush=True)
+
+    print_gt()
+    start = time.time()
+    auth_done = False
+    while time.time() - start < DURATION_SEC:
+        now = datetime.now(timezone.utc).isoformat()
+        elapsed = time.time() - start
+        # 정상 트래픽: 다수 IP·저빈도 → 항상 threshold 아래 (FP 0)
+        for _ in range(random.randint(20, 40)):
+            ip = f"10.0.{random.randint(0, 3)}.{random.randint(1, NORMAL_IPS)}"
+            uri = random.choice(["/content/list", f"/stream/start/{random.randint(1, 40)}", "/auth/login"])
+            emit(now, random.choice(SERVICES), ip, uri,
+                 f"user_{random.randint(0, 999):04d}", True,
+                 "POST" if uri == "/auth/login" else "GET", 200)
+        if elapsed >= WARMUP_SEC:
+            # 인증우회: 토큰 없이 /stream (단건 즉시 탐지) — 한 번만, IP 넓게 분산(인증우회發 DoS 오탐 방지)
+            if not auth_done:
+                for k in range(AUTH_BYPASS_N):
+                    emit(now, "streaming", f"198.51.{(k // 254) % 200}.{k % 254 + 1}",
+                         f"/stream/start/{k % 40 + 1}", None, False, "GET", 401)
+                auth_done = True
+                print(f"[gt] 인증우회 {AUTH_BYPASS_N}건 발행", flush=True)
+            # DoS: 고정 공격 IP가 폭증 — ATTACK_SEC 동안만 주입(볼륨 상한), 이후엔 정상만 흘려 윈도우 마감
+            if elapsed < WARMUP_SEC + ATTACK_SEC:
+                for ip in ATTACKERS:
+                    for _ in range(ATTACK_REQS):
+                        emit(now, "streaming", ip, "/stream/start/1057265", "user_0000", True, "GET", 200)
+                print(f"[gt] DoS 버스트 attackers={N_ATTACKERS} x{ATTACK_REQS}", flush=True)
+        p.flush()
+        time.sleep(2)
+
+    print_gt()
+    print("[gt] 종료 — detections 평가까지 watermark(30s) 대기 후 확인", flush=True)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dos-gt
+  namespace: kafka
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 0
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      restartPolicy: Never
+      containers:
+        - name: gt
+          image: speed-consumer:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "/script/sim_gt.py"]
+          env:
+            - name: N_ATTACKERS
+              value: "200"
+            - name: ATTACK_REQS
+              value: "250"
+            - name: AUTH_BYPASS_N
+              value: "2000"
+            - name: WARMUP_SEC
+              value: "170"
+            - name: ATTACK_SEC
+              value: "40"
+            - name: DURATION_SEC
+              value: "320"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+      volumes:
+        - name: script
+          configMap:
+            name: dos-gt-script
