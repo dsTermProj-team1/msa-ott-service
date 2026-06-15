@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: simulator
+  namespace: default
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-virtual-machine
+      restartPolicy: Never
+      containers:
+        - name: simulator
+          image: simulator:latest
+          imagePullPolicy: Never
+          command: ["python", "-u", "main.py"]
+          env:
+            - name: AUTH_URL
+              value: "http://auth-service:8001"
+            - name: CONTENT_URL
+              value: "http://content-service:8002"
+            - name: STREAM_URL
+              value: "http://streaming-service:8003"
+            # 영상용 — 유저 수 축소(1단계 bcrypt 병목 때문) + 대기 단축 (단계는 그대로 다 돎)
+            - name: NUM_USERS
+              value: "150"
+            - name: BASELINE_WAIT_SEC
+              value: "10"
+            - name: ATTACK_DELAY_SEC
+              value: "5"
+            - name: DOS_DURATION_SEC
+              value: "10"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
